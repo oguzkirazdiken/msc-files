@@ -1,30 +1,15 @@
-## Welcome to PolatAlemd-R GitHub Page
+## Welcome to My Progress Journal
 
-Members:
-- Burcu Balkan
-- Berk çakar
-- Oğuz Ay
-- Oğuz Kirazdiken
-- Özgür Kenanoğlu
+## Week 1 
 
-### ODD Assignment (Group)
+[RMarkdown Homework](https://pjournal.github.io/mef03-oguzkirazdiken/Oguz-Kirazdiken-R-Markdown-Homework.html)
 
-You can see our assignment on this [link](https://pjournal.github.io/mef03g-polatalemd-r/ODD-Car-Sales-Analysis.html).
+## Week 4 - BKM Assignmet 
 
-### EGM Assignment (Group)
+[BKM Assignment](https://pjournal.github.io/mef03-oguzkirazdiken/BKM-Assignment.html)
 
-You can see our assignment on this [link](https://pjournal.github.io/mef03g-polatalemd-r/EGM_DATA_ANALYSIS.html).
+## Week 6 - Tennis Data Analysis
 
-### Project Proposal
+[Tennis Data Analysis](https://pjournal.github.io/mef03-oguzkirazdiken/Tennis_Data-Analysis.html)
 
-You can see our project proposal [here](https://pjournal.github.io/mef03g-polatalemd-r/Polat-Alemd-R-Project-Proposal.html).
 
-### Project Initial Analysis
-
-You can see our project initial analysis [here](https://pjournal.github.io/mef03g-polatalemd-r/Polat-AlemdR-Project-Initial-Analysis.html).
-
-### Final Project Report
-
-You can see our final project report [here](https://pjournal.github.io/mef03g-polatalemd-r/PolatAlem-R----Final-Project-Report.html).
-
-You can see our final project presentation [here](https://pjournal.github.io/mef03g-polatalemd-r/Polat AlemdR Group Project - Understanding Higher Education System in Turkey.pdf).
