@@ -1,0 +1,226 @@
+---
+title: "SQL Group Project"
+author: "Group - Hosh Bash"
+date: "12/15/2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Summary
+
+The source of dataset is American Statistical Association and Bureau of Transportation Statistics, USA. Our data is related to Airlines Statistics mostly reporting Carriers and their On-Time Performance while on-flight. The years of data includes from 2005 to 2008. In
+Below, all variables included in dataset can be found. You can find source of the dataset on this [website](http://stat-computing.org/dataexpo/2009/the-data.html)
+
+```{r,message=FALSE}
+
+tmp=tempfile(fileext=".xlsx")
+
+download.file("https://github.com/pjournal/mef03g-polatalemd-r/blob/master/data_fields_BDM.xlsx?raw=true",destfile=tmp,mode='wb')
+raw_data=readxl::read_excel(tmp)
+file.remove(tmp)
+
+head(raw_data, 40)
+
+``` 
+
+
+# Acquiring Data
+
+The data was downloaded from the indicated website above and unzipped. In order to have it explanatory, additional support data related to carriers, planes, airports were also provided. 
+
+```{r,message=FALSE}
+flight_2008 <- read.csv("C:/Users/Berk Cakar/Desktop/2008.csv")
+flight_2007 <- read.csv("C:/Users/Berk Cakar/Desktop/2007.csv")
+flight_2006 <- read.csv("C:/Users/Berk Cakar/Desktop/2006.csv")
+flight_2005 <- read.csv("C:/Users/Berk Cakar/Desktop/2005.csv")
+planes <- read.csv("C:/Users/Berk Cakar/Desktop/planes.csv")
+airports <- read.csv("C:/Users/Berk Cakar/Desktop/airports.csv")
+carriers <- read.csv("C:/Users/Berk Cakar/Desktop/carriers.csv")
+
+``` 
+
+
+# Processing Data
+
+Downloaded data was integrated by  read_csv command of R itself.  Since data has been clean and very tidy, no additional cleaning process was executed - (the discovery phase took time to find such data). 
+
+# Libraries utilized 
+
+Five different open source libraries of R environment were used for the analyses and execution of big data management to proceed
+
+```{r,results='hide',message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(sqldf)
+library(knitr)
+library(kableExtra)
+```
+
+#Analysing the Big Data
+
+Since data size is too big (size of 600MegaByte), several years were selected specifically to obtain insights.
+
+## Insights
+
+### 1. Top 10 Carriers by Total Air Time in 2008
+
+This analysis helps to observe the Airline companies that have the highest time during flights in 2008. 
+
+```{r,message=FALSE}
+analyse_1 <- sqldf("WITH airtime AS (
+SELECT UniqueCarrier, sum(AirTime) as TotalAirTime 
+FROM flight_2008 
+GROUP BY UniqueCarrier)
+SELECT case when b.Description like 'US Airways Inc. %' then 'US Airways Inc.' else b.Description end as Carrier, TotalAirTime 
+FROM airtime a
+LEFT JOIN carriers b on a.UniqueCarrier = b.Code
+ORDER BY TotalAirTime DESC
+LIMIT 10")
+
+kable(analyse_1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+``` 
+
+### 2. Top 10 Airplane Models by Total Air Time in 2008
+
+Understanding different planes total flight time in 2008.
+
+
+```{r,message=FALSE}
+analyse_2 <- sqldf("WITH airtime AS(
+SELECT TailNum, sum(airtime) as total_air_time
+from flight_2008
+GROUP BY TailNum
+)
+SELECT (b.manufacturer||' '||b.model) as PlaneModel, sum(a.total_air_time) as TotalAirTime 
+FROM airtime a
+LEFT JOIN planes b on a.TailNum = b.tailnum
+WHERE b.manufacturer !=''
+and b.model !=''
+GROUP BY PlaneModel
+ORDER BY TotalAirTime DESC
+LIMIT 10")
+
+kable(analyse_2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+``` 
+
+### 3. The Most Popular 20 Routes of 2008
+This is quite critical to see which cities are heaviest on incoming and outgoing transfer among them. SF-LA is the most popular route following with LA-SF in 2008.
+
+```{r,message=FALSE}
+analyse_3 <- sqldf("WITH routes AS(
+SELECT origin, Dest, count(*) as num_flights
+FROM flight_2008 a
+GROUP BY Origin, Dest
+ORDER BY num_flights DESC
+),
+cities AS(
+SELECT a.Origin, a.Dest, a.num_flights, b.city as origin_city, c.city as destination_city
+FROM routes a
+LEFT JOIN airports b on a.Origin=b.iata
+LEFT JOIN airports c on a.Dest=c.iata)
+SELECT (origin_city||'->'||destination_city) as FlightRoute, num_flights as NumberOfFlights
+FROM cities
+LIMIT 20")
+
+kable(analyse_3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+``` 
+
+### 4. Weekly Number of Flights in 2008
+This analysis is required to see which weeks are on peak and which ones are on low demand.
+
+```{r,message=FALSE}
+analyse_4 <- sqldf("WITH weekly_flights AS(
+SELECT case when month = 1 then 'January'
+when month = 2 then 'February' when month = 3 then 'March'
+when month = 4 then 'April' when month = 5 then 'May'
+when month = 6 then 'June' when month = 7 then 'July'
+when month = 8 then 'August' when month = 9 then 'September'
+when month = 10 then 'October' when month = 11 then 'November'
+when month = 12 then 'December' else 0 end as month,
+case when DayofMonth in (1,2,3,4,5,6,7) then 1
+when DayofMonth in (8,9,10,11,12,13,14) then 2
+when DayofMonth in (15,16,17,18,19,20,21) then 3
+else 4 end as WeekofMonth, count(*) as num_flights
+From flight_2008
+GROUP BY month, WeekofMonth)
+SELECT (WeekofMonth||'. Week of '||month) as WeekOfFlight,num_flights as NumberOfFlights
+FROM weekly_flights
+ORDER BY NumberOfFlights desc")
+
+ggplot(data = analyse_4, aes(x = reorder(WeekOfFlight, -NumberOfFlights), y = NumberOfFlights)) + geom_bar(stat = "identity") + 
+  labs(x = "", y = "", title = "Weekly Number of Flights in 2008") + 
+  theme_bw() + theme( axis.text.x = element_text(angle = 90,vjust = 0.49, hjust = 0.49, size = 5)) +
+  scale_y_continuous(labels = scales::comma) + theme(line=element_blank())
+
+``` 
+
+### 5. Top 5 Airports with the Highest Number of Delays Due To Weather Conditions
+Delay is one of the most important topic in airline industry. This insight is to observe which airports have the highest incident numbers to showcase the issues elated to weather conditions.
+
+```{r,message=FALSE}
+analyse_5 <- sqldf("
+SELECT fl.Origin as AirportCode,ai.airport as Airport,ai.city as City,count(*) as NumberOfDelays
+FROM flight_2008 fl
+  INNER JOIN airports ai ON fl.Origin = ai.iata
+WHERE fl.CarrierDelay > 30
+GROUP BY fl.Origin,ai.airport,ai.city,ai.country
+ORDER BY NumberOfDelays DESC
+LIMIT 5
+      ")
+
+kable(analyse_5) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+``` 
+
+### 6.  Delay Trend of Worst Airline Companies between 2005-2008
+Worst airline company definiton: number of delays occured higher than 30 minutes
+The insight helps to show the improvement areas and development needs for each airlines with four years trend data
+
+```{r,message=FALSE}
+worst_carriers <- sqldf("
+SELECT fl.UniqueCarrier,ca.Description,count(*) as total_number_of_delays,fl.Year
+FROM flight_2008 fl
+  INNER JOIN carriers ca ON fl.UniqueCarrier = ca.Code
+WHERE fl.CarrierDelay > 30
+GROUP BY fl.UniqueCarrier,ca.Description,fl.Year
+ORDER BY count(*) DESC
+LIMIT 5
+      ")
+
+x <- c("flight_2005","flight_2006","flight_2007","flight_2008")
+y <- vector(mode = "list", length = 4)
+
+for (i in 1:4){
+  y[[i]] <- sqldf(sprintf("
+    SELECT fl.UniqueCarrier,ca.Description,count(*) as total_number_of_delays,fl.Year
+    FROM %s fl
+      INNER JOIN carriers ca ON fl.UniqueCarrier = ca.Code
+    WHERE fl.CarrierDelay > 30
+    AND fl.UniqueCarrier IN (SELECT UniqueCarrier
+                              FROM worst_carriers)
+    GROUP BY fl.UniqueCarrier,ca.Description,fl.Year
+    ORDER BY count(*) DESC
+    LIMIT 5  
+  ",x[i]))
+}
+
+
+four_year_total_delays <- bind_rows(y)
+
+four_year_total_delays %>%
+  ggplot(aes(x = Year,y=total_number_of_delays,color = Description))+
+  geom_line()
+
+``` 
+
+
+
