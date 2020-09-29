@@ -1,0 +1,800 @@
+
+---
+title: "Predicting House Sales Price in King County, USA"
+author: "Oğuz Kirazdiken - Berk Çakar"
+date: "5/20/2020"
+output: html_document
+---
+
+
+### Library Import
+
+
+```{r,results='hide',message=FALSE, error=FALSE, warning=FALSE}
+library(dplyr)
+library(leaflet)
+library(knitr)
+library(ggplot2)
+library(RColorBrewer)
+library(cluster)
+library(purrr)
+library(NbClust)
+library(corrplot)
+library(car)
+library(caTools)
+```
+
+### Importing Data to R Environment and Data Prep for Analysis
+
+We downloaded data of house sales in King County from Kaggle and uploaded it to github. We will make a reproducible example of data analysis from the raw data located in github to the final analysis and linear regression to predict house prices. 
+
+In below, you can see the R code to download .csv file from github and store it as a dataframe in a variable called <span style="color:red">housing_data</span>
+
+```{r, results='hide',message=FALSE, error=FALSE, echo=FALSE}
+
+tmp=tempfile(fileext=".csv")
+
+download.file("https://github.com/cakarb/palms/blob/master/Housing_Dataset.csv?raw=true",destfile=tmp,mode='wb')
+housing_data=read.csv(tmp)
+file.remove(tmp)
+```
+
+You can see a part of the dataset as an example and datatypes. We do not need a data type conversion since all of them defined correctly besides date which we are not going to use it in analysis.
+
+```{r}
+kable(head(housing_data), caption = "Sample of Housing Data")
+str(housing_data)
+```
+
+If there are some missing values in dataset, we need to treat them. So we checked if our dataset has any missing values with the code below. And we see there are no missing values in dataset.
+
+```{r,message=FALSE}
+sum(is.na(housing_data))
+```
+
+
+Also, we would like to cluster data according to their prices to use this feature in exploratory data analysis. To achive that it is important to see distribution of price.
+
+```{r,message=FALSE}
+summary(housing_data$price)
+```
+
+We decided to cluster data according to quartiles of it. With the code below we created 4 clusters which are <span style="color:yellow">Lowest Price Range</span>, <span style="color:green">Medium-Low Price Range</span>, <span style="color:blue">Medium-High Price Range</span> and <span style="color:red">Highest Price Range</span>.
+
+```{r,message=FALSE}
+housing_data <- housing_data %>% 
+  mutate(price_range = case_when(price <= 321950 ~ "Lowest Price Range",
+                        price <= 540088 ~ "Medium-Low Price Range",
+                        price <= 645000 ~ "Medium-High Price Range",
+                        price > 645000 ~ "Highest Price Range"))
+```
+
+### Visualizing Dataset on a Map
+
+To have a better understanding of data and how location has an impact on prices we used <span style="color:blue">leaflet</span> library and Esri.NatGeoWorldMap as map provider. In the map below, you can see the houses colored with respect to price range. It is kind of an interactive map, you can move aroun, zoom in/out and click on little circles to view houses' price, area and condition.
+
+```{r,message=FALSE}
+low_price_houses <- housing_data %>% filter(price_range == "Lowest Price Range")
+medlow_price_houses <- housing_data %>% filter(price_range == "Medium-Low Price Range")
+medhigh_price_houses <- housing_data %>% filter(price_range == "Medium-High Price Range")
+high_price_houses <- housing_data %>% filter(price_range == "Highest Price Range")
+
+color_palettes <- colorFactor(palette = c("yellow", "green", "blue", "red"), 
+                   levels = c('Lowest Price Range', 'Medium-Low Price Range', 'Medium-High Price Range', 
+                              'Highest Price Range'))
+
+
+leaflet(options = leafletOptions(minZoom = 9, dragging = TRUE)) %>% 
+  addCircleMarkers(data = low_price_houses, radius = 0.75, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Condition: ", condition),
+                   color = ~color_palettes(price_range),  group = 'Lowest Price Range') %>%
+  
+  addCircleMarkers(data = medlow_price_houses, radius = 0.75, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Condition: ", condition),
+                   color = ~color_palettes(price_range),  group = 'Medium-Low Price Range') %>%
+  
+  addCircleMarkers(data = medhigh_price_houses, radius = 0.75, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Condition: ", condition),
+                   color = ~color_palettes(price_range),  group = 'Medium-High Price Range') %>%
+  
+  addCircleMarkers(data = high_price_houses, radius = 0.75, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Condition: ", condition),
+                   color = ~color_palettes(price_range),  group = 'Highest Price Range') %>%
+  addProviderTiles(provider = 'Esri.NatGeoWorldMap')%>%
+  setView(lng = -122.337132, lat = 47.607806, zoom = 12) %>%
+  addLegend(pal = color_palettes, 
+            values = c('Lowest Price Range', 'Medium-Low Price Range', 'Medium-High Price Range', 
+                       'Highest Price Range'),
+            opacity = 0.7, title = "Price Range", position = "bottomright")
+```
+
+### Geolocational Clustering
+
+AS you can see on the map above, some parts of county have similar price ranges, so we decided to make a geolocational clustering. This clustering might help us while predicting price of a house as well.
+
+We used K-Means algorithm to cluster data and elbow method to decide how many clusters should we have.
+
+```{r,message=FALSE}
+geo_groups <- select(housing_data, lat, long)
+
+wss <- (nrow(geo_groups)-1)*sum(apply(geo_groups,2,var))
+for (i in 2:15) wss[i] <- sum(kmeans(geo_groups,
+                                     centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
+```
+
+We can say that three clusters are enough for this data with respect to within groups sum of squares plot above.
+
+```{r, results='hide',message=FALSE, error=FALSE}
+options(digits = 2)
+fit <- kmeans(geo_groups, 3)
+table(fit$cluster)
+
+
+# Add segmentation to dataset
+housing_data <- data.frame(housing_data, fit$cluster)
+```
+
+After we merge our original dataset with cluster, we would like to show them on a map to visualize locations of clusters.
+
+```{r,message=FALSE}
+cluster_1 <- housing_data %>% filter(fit.cluster == 1)
+cluster_2 <- housing_data %>% filter(fit.cluster == 2)
+cluster_3 <- housing_data %>% filter(fit.cluster == 3)
+
+color_palettes <- colorFactor(palette = c("green", "blue", "red"), 
+                   levels = c('Geo-Cluster 1', 'Geo-Cluster 2', 'Geo-Cluster 3'))
+
+
+leaflet(options = leafletOptions(minZoom = 9, dragging = TRUE)) %>% 
+  addCircleMarkers(data = cluster_1, radius = 0.75, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Condition: ", condition),
+                   color = ~color_palettes('Geo-Cluster 1'),  group = 'Geo-Cluster 1') %>%
+  
+  addCircleMarkers(data = cluster_2, radius = 0.75, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Condition: ", condition),
+                   color = ~color_palettes('Geo-Cluster 2'),  group = 'Geo-Cluster 2') %>%
+  
+  addCircleMarkers(data = cluster_3, radius = 0.75, 
+                   popup = ~paste0("<b>", 'USD ', price, "</b>", "<br/>", "House area (sqft): ", 
+                                   sqft_living15, "<br/>", "Condition: ", condition),
+                   color = ~color_palettes('Geo-Cluster 3'),  group = 'Geo-Cluster 3') %>%
+  
+
+  addProviderTiles(provider = 'Esri.NatGeoWorldMap')%>%
+  setView(lng = -122.001008, lat = 47.474443, zoom = 9) %>%
+  addLegend(pal = color_palettes, 
+            values = c('Geo-Cluster 1', 'Geo-Cluster 2', 'Geo-Cluster 3'),
+            opacity = 0.7, title = "Price Range", position = "bottomright")
+```
+
+We can examine average prices of houses for this clusters below. According to avarege prices, Geo-Cluster 1 (green dots on the map above) has the highest average price. Geo-Cluster 3 (red dots on the map above) has the second highest average prices and Geo-Cluster 2 has the lowest average price with nearly half of other ones.
+
+```{r,message=FALSE}
+avg_prices <- housing_data %>%
+  group_by(fit.cluster) %>% 
+  transmute(avg_price=mean(price))%>% distinct()%>%arrange(fit.cluster)
+
+kable(avg_prices, caption = "Avg. Prices of Geo-Locational Clusters", col.names =list("Clusters", "Avg Price"),align = "lc")
+```
+
+### Exploratory Data Analysis
+
+First, we would like to see distribution of house prices and created the histogram below. The histogram is skewed and we converted it to uniform distribution by using log function in the second histogram.
+
+```{r,message=FALSE}
+hist(housing_data$price,
+main="Histogram of Housing Prices",
+xlab="Price",
+col="darkmagenta",
+freq=FALSE
+)
+```
+
+```{r,message=FALSE}
+hist(log(housing_data$price),
+main="Histogram of Housing Prices w/ Log Function",
+xlab="Price",
+col="darkmagenta",
+freq=FALSE
+)
+```
+
+### Relationship Between Living Area and Price
+
+We would like to visualize relationship of different variables with price. First of all we would like to see how living space has an impact on price. As you can see in the chart below, they are somehow corraleted and price is increasing as living space.
+
+```{r,message=FALSE}
+
+plot1 <- ggplot(housing_data,aes(x=sqft_living,y=price))+
+  geom_jitter(alpha=0.5,size=2,color="darkgreen")+stat_smooth(method="lm",se=F,span=0.7)+
+  labs("title=Sqft Living vs Price")+scale_color_manual("Bedrooms",values="darkred")
+
+plot1
+
+```
+
+
+### Relationship Between Number of Bedrooms and Price
+
+We can easily say that number of bedrooms in a house has a positive impact on prices. You can see in graph below, house prices are increasing with number of bedrooms.
+
+
+```{r,message=FALSE}
+housing_data %>%
+  group_by(bedrooms) %>%
+  summarise(MeanPrice = mean(price, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(bedrooms = reorder(bedrooms,MeanPrice)) %>%
+  arrange(desc(MeanPrice)) %>%
+ 
+  ggplot(aes(x = bedrooms,y = MeanPrice)) +
+  geom_bar(stat='identity',colour="white", fill = "#FFA07A") +
+  geom_text(aes(x = bedrooms, y = 1, label = paste0(format(round(MeanPrice, 2), nsmall = 2),sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Number of Bedrooms', 
+       y = 'Mean Price', 
+       title = 'Bedrooms and Mean Price') +
+  coord_flip() + 
+  theme_bw()
+```
+
+### Relationship Between Number of Bathrooms and Price
+
+Relationship between number of bathrooms and price is really similar to number of bedrooms and price. Number of bathrooms has a positive impact on house price.
+
+```{r,message=FALSE}
+housing_data %>%
+  group_by(bathrooms) %>%
+  summarise(PriceMedian = median(price, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(bathrooms = reorder(bathrooms,PriceMedian)) %>%
+  arrange(desc(PriceMedian)) %>%
+  head(10) %>%
+  
+  
+  ggplot(aes(x = bathrooms,y = PriceMedian)) +
+  geom_bar(stat='identity',colour="white", fill = "lightgoldenrod4") +
+  geom_text(aes(x = bathrooms, y = 1, label = paste0(PriceMedian,sep="")),
+            hjust=0, vjust=.5, size = 4, colour = 'black',
+            fontface = 'bold') +
+  labs(x = 'Number of Bathrooms', 
+       y = 'Median Price', 
+       title = 'Bathrooms and Median Price') +
+  coord_flip() + 
+  theme_bw()
+
+```
+
+### Relationship Between Basement Area and Price
+
+Besides of Turkey, basements are essential for the most of the American houses. People are using them to repair things like electronics, cars and also people are using this are for their hobbies. As you can see in the graph below, area of basement has a positive impact on price as well.
+
+```{r,message=FALSE}
+options(repr.plot.width=6, repr.plot.height=3)
+ggplot(housing_data,aes(x=sqft_basement,y=price))+geom_point(col="blue",alpha=0.5)+stat_smooth(method="lm",se=F,alpha=0.6,size=0.5)
+```
+
+### Relationship Between Condition and Price
+
+You can see whole student numbers in Turkey. We calculated the total numbers of student by years.There is an increase in the number of students due to the population increase.
+
+```{r,message=FALSE}
+condition_price <- housing_data %>%group_by(factor(condition))%>%summarise(mean_price=mean(price),sd=sd(price),count=n())
+
+kable(condition_price, caption = "House Prices According to Condition",
+      col.names =list("Condition", "Avg Price", "Standard Deviation", "# of Houses"),
+      align="crrr")
+
+```
+
+
+```{r results='hide', message=FALSE,echo=FALSE}
+
+library(readr)
+
+urlfile="https://raw.githubusercontent.com/oguzkirazdiken/oguz.kirazdiken/master/kc_house_data.csv"
+
+df <- read_csv(url(urlfile))
+
+
+```
+
+
+```{r,message=FALSE,echo=FALSE}
+
+library(dplyr)
+
+geo_groups <- select(df, lat, long)
+
+wss <- (nrow(geo_groups)-1)*sum(apply(geo_groups,2,var))
+
+for (i in 2:15) wss[i] <- sum(kmeans(geo_groups,centers=i)$withinss)
+
+
+```
+
+
+```{r, results='hide',message=FALSE, error=FALSE,echo=FALSE}
+
+options(digits = 2)
+
+fit <- kmeans(geo_groups, 3)
+
+table(fit$cluster)
+
+# Add segmentation to dataset
+
+df <- data.frame(df, fit$cluster)
+
+
+```
+
+### Encoding Clusters
+
+As we identified the three clusters of latitude and longitude information, while implementing the information through the dataset it is needed to do one hot encoding. Otherwise implemented linear regression model will consider it like a continuous variable.
+
+```{r, results='hide',message=FALSE, error=FALSE}
+
+df <- df %>% mutate(geo_cluster_1 = ifelse(fit.cluster == 1,1,0))
+
+df <- df %>% mutate(geo_cluster_2 = ifelse(fit.cluster == 2,1,0))
+
+df <- df %>% mutate(geo_cluster_3 = ifelse(fit.cluster == 3,1,0))
+
+df <- df %>% select(-fit.cluster)
+
+```
+
+### Renovation Effect
+
+In the dataset, the information about the date when the house was built and whether it was renovated or not was given in the different columns.In order to see the correlation of the freshness of a house with its' price, it would be useful to see with an additional column that the last renovated date or if it is not renovated build year together.
+
+
+```{r, results='hide',message=FALSE, error=FALSE}
+
+df <- df %>% mutate(renovated_or_build = ifelse(yr_renovated == 0,yr_built,yr_renovated))
+
+```
+
+
+### Correlation Matrix
+
+
+```{r message=FALSE, warning=FALSE,fig.align='center',fig.width = 8}
+
+library(GGally)
+library(dplyr)
+
+ggcorr(df %>% select(-date,-id), name = "corr", label = TRUE, hjust = 0.9 , label_size = 2.5, size = 3)
+
+```
+
+
+It is clearly seen that sqft_living, grade , sqft_above , sqft_living15 , bathrooms features have realtively higher 
+correlation for price value if we compare with others. We can see below, the whole list of correlation values with house prices.
+
+
+```{r message=FALSE, warning=FALSE}
+
+library(tibble)
+
+rownames_to_column(data.frame(cor(df %>% select(-date,-id))) %>% select(price)) %>% arrange(desc(price))
+
+```
+
+
+```{r message=FALSE, warning=FALSE,fig.align='center',fig.width = 10}
+
+library(gridExtra)
+
+p1 <- ggplot(df, aes(x = sqft_living, y = price)) +
+        geom_point(color = 'red', size = 0.5) +
+        geom_smooth(method="lm", color = 'blue', size = 0.5) +
+        labs(x = 'Living Area (sq.ft)', y = 'Price (USD)') + 
+        scale_y_continuous(labels = scales::comma)
+
+
+p2 <- ggplot(df, aes(x = sqft_above, y = price)) +
+        geom_point(color = 'purple', size = 0.5) +
+        geom_smooth(method="lm", color = 'yellow', size = 0.5) +
+        labs(x = 'House Area (sq.ft)', y = 'Price (USD)') + 
+        scale_y_continuous(labels = scales::comma)
+
+
+grid.arrange(p1,p2, nrow = 1,
+             top = "House Sales in King County, USA")
+
+```
+
+
+
+
+```{r message=FALSE, warning=FALSE,fig.align='center',fig.width = 10,fig.height = 12}
+
+p3 <- ggplot(df, aes(x = as.factor(grade), y = price)) + 
+      geom_boxplot(fill="slateblue", alpha=0.2) + 
+      labs(x = 'Grade', y = 'Price (USD)') + 
+      scale_y_continuous(labels = scales::comma)
+
+
+p4 <- ggplot(df, aes(x = as.factor(bathrooms), y = price)) + 
+      geom_boxplot(fill="slateblue", alpha=0.2) + 
+      labs(x = '# of Bathrooms', y = 'Price (USD)') + 
+      scale_y_continuous(labels = scales::comma)
+
+
+p5 <- ggplot(df, aes(x = as.factor(view), y = price)) + 
+      geom_boxplot(fill="slateblue", alpha=0.2) + 
+      labs(x = 'view', y = 'Price (USD)') + 
+      scale_y_continuous(labels = scales::comma)
+
+
+grid.arrange(p3,p4,p5, nrow = 3,
+             top = "House Sales in King County, USA")
+
+```
+
+
+In the dataset there are some highly correlated features with house price which can be evaluated as a categorical firstly but, they can be included in the model as a continuous variable because the house price shows a certain increase while this features improving. Relatively high correlated features can be seen above. 
+
+
+
+### Examining the Performance Measures For Every Individual Feature
+
+Main purpose of the given code below is that, examining every features' model performance individually in terms of R^2^ and RMSE performance.
+
+```{r message=FALSE, warning=FALSE}
+
+library(mltools)
+
+
+smp_size <- floor(0.70 * nrow(df))
+
+set.seed(123)
+train_ind <- sample(seq_len(nrow(df)), size = smp_size)
+
+train <- df[train_ind, ] %>% select(-id)
+test <- df[-train_ind, ] %>% select(-id)
+
+
+price_predictions <- data.frame(test$price)
+
+rsquares <- c()
+
+rmse <- c()
+
+for(i in (3:24)){
+  
+  new_train <- train[,c(2,i)]
+  
+  model <- lm(price ~ .,data = new_train)
+  
+  price_predictions[,(i-1)] <- predict(model,test)
+  
+  rsquares[(i-2)] <- summary(model)$r.squared  
+
+  rmse[(i-2)] <- sqrt(sum((price_predictions[1] - price_predictions[i-1])**2)/length(price_predictions[1]))
+     
+}
+
+rmse_df <- data.frame(colnames(train[,3:24]),rmse)
+
+colnames(rmse_df) <- c("features","rmse")
+
+rsquares_df <- data.frame(colnames(train[,3:24]),rsquares)
+
+colnames(rsquares_df) <- c("features","rsquares")
+
+```
+
+
+```{r message=FALSE, warning=FALSE,fig.align='center',fig.width = 10,fig.height = 10}
+
+p5 <- ggplot(rmse_df,aes( x = features , y = rmse ,group = 1)) + 
+        geom_line(color = "red") + 
+        geom_point() +
+        scale_y_continuous(labels = scales::comma) + 
+        theme(axis.text.x = element_text(face = "bold",angle = 30))
+
+
+p6 <- ggplot(rsquares_df,aes( x = features , y = rsquares ,group = 1)) + 
+        geom_line(color = "red") + 
+        geom_point() +
+        theme(axis.text.x = element_text(face = "bold",angle = 30))
+
+
+grid.arrange(p5,p6, nrow = 2,
+             top = "House Sales in King County, USA")
+
+```
+
+
+It is clearly seen that with their lower RMSE performance and higher power of representing the proportion of variance in house prices given 11 feature becomes prominent.
+
+  - bathrooms
+  - bedrooms
+  - geo_cluster_1
+  - geo_cluster_2
+  - geo_cluster_3
+  - grade
+  - sqft_above
+  - sqft_basement
+  - sqft_living
+  - sqft_living15
+  - view
+
+
+### Extracting Best Features and Correlation Matrix
+
+
+```{r message=FALSE, warning=FALSE,fig.align='center',fig.width = 8}
+
+new_df <- df %>% 
+  select(price,bathrooms,bedrooms,geo_cluster_1,geo_cluster_2,geo_cluster_3,grade,sqft_above,sqft_basement,sqft_living,sqft_living15,view)
+
+ggcorr(new_df, name = "corr", label = TRUE, hjust = 0.7 , label_size = 2.5, size = 3)
+
+```
+
+
+### Dealing With Multicollinearity
+
+
+While extracting good predictor features according to their individual performances, we did not consider their correlation with each other. Because of it ,including correlated features together forced model to evaluate some missing coefficients for some features.
+
+
+
+```{r,message=FALSE,warning=FALSE}
+
+model <- lm(price ~ bathrooms + bedrooms + 
+              geo_cluster_1 + geo_cluster_2 + geo_cluster_3 + grade + 
+              sqft_above + sqft_basement + sqft_living + sqft_living15 + view,data = new_df)
+
+
+summary(model)
+
+```
+
+
+```{r,message=FALSE,warning=FALSE}
+
+library(car)
+
+model <- lm(price ~ bathrooms + bedrooms + 
+              geo_cluster_1 + geo_cluster_3 + grade + 
+              sqft_basement + sqft_living + view,data = new_df)
+
+
+
+summary(model)
+
+vif(model)
+
+```
+
+
+It is clearly seen from our second correlation matrix some pairs has still much higher correlation;
+
+  - geo_cluster_1 ~ geo_cluster_2 ~ geo_cluster_3
+
+  - sqft_above ~ sqft_living ~ sqft_living15 
+
+
+
+To avoid multicollinearity from model geo_cluster_2 , sqft_above , sqft_living15 features are extracted.With that change all VIF values of features settled under 5 which is acceptable.
+
+### Defining Training and Test Sets
+
+```{r,message=FALSE,warning=FALSE}
+
+smp_size <- floor(0.70 * nrow(new_df))
+
+set.seed(123)
+train_ind <- sample(seq_len(nrow(new_df)), size = smp_size)
+
+new_train <- new_df[train_ind, ] %>% select(-geo_cluster_2,-sqft_above,-sqft_living15)
+new_test <- new_df[-train_ind, ] %>% select(-geo_cluster_2,-sqft_above,-sqft_living15)
+
+```
+
+
+```{r,message=FALSE}
+
+new_model <- lm(price ~ bathrooms + bedrooms + 
+              geo_cluster_1 + geo_cluster_3 + grade + 
+              sqft_basement + sqft_living + view,data = new_train)
+
+predicted_prices <- predict(new_model,new_test)
+
+summary(new_model)
+
+rmse <- sqrt(sum((new_test$price - predicted_prices)**2)/length(new_test$price))
+
+rmse
+```
+
+
+```{r,message=FALSE}
+
+qqnorm(new_model$residuals)
+qqline(new_model$residuals, col = "red")
+
+```
+
+Our residual quantiles plot doesn't show a straight line pattern it is more likely to show an logaritmic pattern.
+Modeling the price value with an logarithmic equation can explain its correlation with other features better.
+
+```{r message=FALSE, warning=FALSE,fig.align='center',fig.width = 10}
+
+library(gridExtra)
+
+p7 <- ggplot(df, aes(x = sqft_living, y = log(price))) +
+        geom_point(color = 'red', size = 0.5) +
+        geom_smooth(method="lm", color = 'blue', size = 0.5) +
+        labs(x = 'Living Area (sq.ft)', y = 'Log Price (USD)') + 
+        scale_y_continuous(labels = scales::comma)
+
+
+p8 <- ggplot(df, aes(x = sqft_basement, y = log(price))) +
+        geom_point(color = 'purple', size = 0.5) +
+        geom_smooth(method="lm", color = 'yellow', size = 0.5) +
+        labs(x = 'Basement Area (sq.ft)', y = 'Log Price (USD)') + 
+        scale_y_continuous(labels = scales::comma)
+
+
+grid.arrange(p7,p8, nrow = 1,
+             top = "House Sales in King County, USA")
+
+```
+
+
+```{r,message=FALSE}
+
+new_model <- lm(log(price) ~ bathrooms + bedrooms + 
+              geo_cluster_1 + geo_cluster_3 + grade + 
+              sqft_basement + sqft_living + view,data = new_train)
+
+predicted_prices <- predict(new_model,new_test)
+
+summary(new_model)
+
+rmse <- sqrt(sum((new_test$price - exp(predicted_prices))**2)/length(new_test$price))
+
+rmse
+```
+
+
+```{r,message=FALSE}
+
+qqnorm(new_model$residuals)
+qqline(new_model$residuals, col = "red")
+
+```
+
+
+With the new logarithmic function of price in the model gives an better result with 0.753 R^2^ value and 187943 RMSE.
+
+Also the residual quantiles plot show more straight line pattern. 
+
+
+### Stepwise Regression
+
+In this section, with the help of the following algorithm, we will try to observe the effects of the features on the R^2^ and RMSE values when the features are added to the model one by one.
+
+The features are sorted according to their correlation with house prices.
+
+```{r,message=FALSE}
+
+
+new_train <- new_train %>% 
+  select(price,sqft_living,grade,bathrooms,view,geo_cluster_3,sqft_basement,bedrooms,geo_cluster_1)
+
+
+price_predictions <- data.frame(new_test$price)
+
+rsquares <- c()
+
+rmse <- c()
+
+
+
+for (i in (2:9)){
+  
+  last_train <- new_train[,c(1:i)]
+  
+  model <- lm(log(price) ~ .,data = last_train)
+  
+  price_predictions[,(i)] <- predict(model,test)
+  
+  rsquares[(i-1)] <- summary(model)$r.squared  
+  
+  rmse[(i-1)] <- sqrt(sum((price_predictions[1] - exp(price_predictions[i]))**2)/length(price_predictions[1]))
+  
+  }
+
+
+
+rmse_df <- data.frame(paste0("Addition of ",colnames(new_train[,2:9])),rmse)
+
+colnames(rmse_df) <- c("features","rmse")
+
+rsquares_df <- data.frame(paste0("Addition of ",colnames(new_train[,2:9])),rsquares)
+
+colnames(rsquares_df) <- c("features","rsquares")
+
+```
+
+```{r message=FALSE, warning=FALSE,fig.align='center',fig.width = 10,fig.height = 10}
+
+library(dplyr)
+
+rsquares_df$features <- factor(rsquares_df$features,levels = rsquares_df$features)
+
+
+rmse_df$features <- factor(rmse_df$features,levels = rmse_df$features)
+
+
+
+
+
+p9 <- ggplot(rmse_df,aes( x = features , y = rmse ,group = 1)) + 
+      geom_line(color = "red") + 
+      geom_point() +
+      scale_y_continuous(labels = scales::comma) + 
+      theme(axis.text.x = element_text(face = "bold",angle = 30))
+
+
+p10 <- ggplot(rsquares_df,aes( x = features , y = rsquares ,group = 1)) + 
+      geom_line(color = "red") + 
+      geom_point() +
+      theme(axis.text.x = element_text(face = "bold",angle = 30))
+
+
+grid.arrange(p9,p10, nrow = 2,
+             top = "House Sales in King County, USA")
+
+
+
+```
+
+It is clearly seen that some of the features like sqft_living , grade , view , geo_cluster_1 has a posite effect on R^2^ and RMSE values when they are added to the model.For other features, although these values do not vary much,but it is still positively increasing, so it is okay to stay in the model.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
